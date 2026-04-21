@@ -1,9 +1,7 @@
-using namespace System.Net
-
-Function Invoke-RemoveStandardTemplate {
+function Invoke-RemoveStandardTemplate {
     <#
     .FUNCTIONALITY
-        Entrypoint,AnyTenant
+        Entrypoint
     .ROLE
         Tenant.Standards.ReadWrite
     #>
@@ -12,31 +10,34 @@ Function Invoke-RemoveStandardTemplate {
 
     $APIName = $Request.Params.CIPPEndpoint
     $Headers = $Request.Headers
-    Write-LogMessage -Headers $Headers -API $APINAME -message 'Accessed this API' -Sev 'Debug'
+
 
     # Interact with query parameters or the body of the request.
     $ID = $Request.Body.ID ?? $Request.Query.ID
     try {
         $Table = Get-CippTable -tablename 'templates'
-        $Filter = "PartitionKey eq 'StandardsTemplateV2' and RowKey eq '$id'"
-        $ClearRow = Get-CIPPAzDataTableEntity @Table -Filter $Filter -Property PartitionKey, RowKey
-        Remove-AzDataTableEntity -Force @Table -Entity $clearRow
-        $Result = "Removed Standards Template named $($ClearRow.name) and id $($id)"
-        Write-LogMessage -Headers $Headers -API $APINAME -message $Result -Sev 'Info'
+        $SafeID = ConvertTo-CIPPODataFilterValue -Value $ID -Type Guid
+        $Filter = "PartitionKey eq 'StandardsTemplateV2' and (RowKey eq '$SafeID' or OriginalEntityId eq '$SafeID' or OriginalEntityId eq guid'$SafeID')"
+        $ClearRow = Get-CIPPAzDataTableEntity @Table -Filter $Filter
+        if ($ClearRow.JSON) {
+            $TemplateName = (ConvertFrom-Json -InputObject $ClearRow.JSON -ErrorAction SilentlyContinue).templateName
+        } else {
+            $TemplateName = ''
+        }
+        $Entities = Get-AzDataTableEntity @Table -Filter $Filter
+        Remove-AzDataTableEntity -Force @Table -Entity $Entities
+        $Result = "Removed Standards Template named: '$($TemplateName)' with id: $($ID)"
+        Write-LogMessage -Headers $Headers -API $APIName -message $Result -Sev Info
         $StatusCode = [HttpStatusCode]::OK
     } catch {
         $ErrorMessage = Get-CippException -Exception $_
-        $Result = "Failed to remove Standards template $ID. $($ErrorMessage.NormalizedError)"
-        Write-LogMessage -Headers $Headers -API $APINAME -message $Result -Sev 'Error' -LogData $ErrorMessage
+        $Result = "Failed to remove Standards template: $TemplateName with id: $ID. Error: $($ErrorMessage.NormalizedError)"
+        Write-LogMessage -Headers $Headers -API $APIName -message $Result -Sev Error -LogData $ErrorMessage
         $StatusCode = [HttpStatusCode]::InternalServerError
     }
 
-
-    # Associate values to output bindings by calling 'Push-OutputBinding'.
-    Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
+    return ([HttpResponseContext]@{
             StatusCode = $StatusCode
             Body       = @{'Results' = $Result }
         })
-
-
 }

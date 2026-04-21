@@ -1,6 +1,4 @@
-using namespace System.Net
-
-Function Invoke-ExecAddAlert {
+function Invoke-ExecAddAlert {
     <#
     .FUNCTIONALITY
         Entrypoint,AnyTenant
@@ -9,36 +7,47 @@ Function Invoke-ExecAddAlert {
     #>
     [CmdletBinding()]
     param($Request, $TriggerMetadata)
-
-    $APIName = $Request.Params.CIPPEndpoint
     $Headers = $Request.Headers
-    Write-LogMessage -headers $Headers -API $APIName -message 'Accessed this API' -Sev 'Debug'
+    $TenantFilter = $Request.Body.tenantFilter ?? $env:TenantID
 
     $Severity = 'Alert'
 
-    $Result = if ($Request.Body.sendEmailNow -or $Request.Body.sendWebhookNow -eq $true -or $Request.Body.writeLog -eq $true) {
+    $Result = if ($Request.Body.sendEmailNow -or $Request.Body.sendWebhookNow -eq $true -or $Request.Body.writeLog -eq $true -or $Request.Body.sendPsaNow -eq $true) {
         $Title = 'CIPP Notification Test'
-        if ($Request.Body.sendEmailNow) {
+        if ($Request.Body.sendEmailNow -eq $true) {
             $CIPPAlert = @{
-                Type        = 'email'
-                Title       = $Title
-                HTMLContent = $Request.Body.text
+                Type         = 'email'
+                Title        = $Title
+                HTMLContent  = $Request.Body.text
+                TenantFilter = $TenantFilter
             }
             Send-CIPPAlert @CIPPAlert
         }
-        if ($Request.Body.sendWebhookNow) {
+        if ($Request.Body.sendWebhookNow -eq $true) {
             $JSONContent = @{
                 Title = $Title
                 Text  = $Request.Body.text
             } | ConvertTo-Json -Compress
             $CIPPAlert = @{
-                Type        = 'webhook'
-                Title       = $Title
-                JSONContent = $JSONContent
+                Type            = 'webhook'
+                Title           = $Title
+                JSONContent     = $JSONContent
+                TenantFilter    = $TenantFilter
+                InvokingCommand = 'Invoke-ExecAddAlert'
             }
             Send-CIPPAlert @CIPPAlert
         }
-        if ($Request.Body.writeLog) {
+        if ($Request.Body.sendPsaNow -eq $true) {
+            $CIPPAlert = @{
+                Type         = 'psa'
+                Title        = $Title
+                HTMLContent  = $Request.Body.text
+                TenantFilter = $TenantFilter
+            }
+            Send-CIPPAlert @CIPPAlert
+        }
+
+        if ($Request.Body.writeLog -eq $true) {
             Write-LogMessage -headers $Headers -API 'Alerts' -message $Request.Body.text -Sev $Severity
             'Successfully generated alert.'
         }
@@ -46,7 +55,7 @@ Function Invoke-ExecAddAlert {
         Write-LogMessage -headers $Headers -API 'Alerts' -message $Request.Body.text -Sev $Severity
         'Successfully generated alert.'
     }
-    Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
+    return ([HttpResponseContext]@{
             StatusCode = [HttpStatusCode]::OK
             Body       = $Result
         })
